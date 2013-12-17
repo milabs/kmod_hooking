@@ -71,7 +71,6 @@ extern khookstr_t __khook_start[], __khook_finish[];
 	__DECLARE_TARGET_ORIGIN(t);		\
 	__DECLARE_TARGET_STRUCT(t) = {		\
 		.name = #t,			\
-		.target = NULL,			\
 		.handler = khook_alias_##t,	\
 		.origin = khook_origin_##t,	\
 		.usage = ATOMIC_INIT(0),	\
