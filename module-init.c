@@ -8,6 +8,8 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
+#include <linux/stop_machine.h>
 
 #include "udis86.h"
 
@@ -49,17 +51,29 @@ extern khookstr_t __khook_start[], __khook_finish[];
 #define khook_for_each(item)			\
 	for (item = __khook_start; item < __khook_finish; item++)
 
-#define __DECLARE_KHOOK_ALIAS(t)		\
+#define __DECLARE_TARGET_ALIAS(t)		\
 	void __attribute__((alias("khook_"#t))) khook_alias_##t(void)
 
-#define __DECLARE_KHOOK_STRUCT(t)		\
+#define __DECLARE_TARGET_ORIGIN(t)		\
+	void notrace khook_origin_##t(void) {	\
+		asm volatile (			\
+			".rept 0x20\n"		\
+			".byte 0x90\n"		\
+			".endr\n"		\
+		);				\
+	}
+
+#define __DECLARE_TARGET_STRUCT(t)		\
 	khookstr_t __attribute__((unused,section(".khook"),aligned(1))) __khook_##t
 
 #define DECLARE_KHOOK(t)			\
-	__DECLARE_KHOOK_ALIAS(t);		\
-	__DECLARE_KHOOK_STRUCT(t) = {		\
+	__DECLARE_TARGET_ALIAS(t);		\
+	__DECLARE_TARGET_ORIGIN(t);		\
+	__DECLARE_TARGET_STRUCT(t) = {		\
 		.name = #t,			\
+		.target = NULL,			\
 		.handler = khook_alias_##t,	\
+		.origin = khook_origin_##t,	\
 		.usage = ATOMIC_INIT(0),	\
 	}
 
@@ -127,40 +141,6 @@ static void extable_make_fixup(struct exception_table_entry * entry, unsigned lo
 #endif
 }
 
-#if 0
-static void raise_undefined_opcode(void)
-{
-	debug("    %s enter\n", __func__);
-
-	asm volatile ( "ud2" );
-
-	debug("    %s leave\n", __func__);
-}
-
-static int fixup_undefined_opcode(struct exception_table_entry * entry)
-{
-	ud_t ud;
-
-	ud_initialize(&ud, BITS_PER_LONG, \
-		      UD_VENDOR_ANY, (void *)raise_undefined_opcode, 128);
-
-	while (ud_disassemble(&ud) && ud.mnemonic != UD_Iret) {
-		if (ud.mnemonic == UD_Iud2)
-		{
-			unsigned long address = \
-				(unsigned long)raise_undefined_opcode + ud_insn_off(&ud);
-
-			extable_make_insn(entry, address);
-			extable_make_fixup(entry, address + ud_insn_len(&ud));
-
-			return 0;
-		}
-	}
-
-	return -EINVAL;
-}
-#endif
-
 /* See lib/extable.c for details */
 static int cmp_ex(const void * a, const void * b)
 {
@@ -171,43 +151,6 @@ static int cmp_ex(const void * a, const void * b)
 		return 1;
 	if (x->insn < y->insn)
 		return -1;
-	return 0;
-}
-
-static int build_extable(void)
-{
-	int i, num_exentries = 0;
-	struct exception_table_entry * extable;
-#if 0
-	extable = (void *)pfnModuleAlloc(sizeof(*extable) * ARRAY_SIZE(exceptions));
-
-	if (extable == NULL) {
-		debug("Memory allocation failed\n");
-		return -ENOMEM;
-	}
-
-	debug("Building extable for:\n");
-
-	for (i = 0; i < ARRAY_SIZE(exceptions); i++) {
-
-		if (exceptions[i].fixup(&extable[num_exentries])) {
-			exceptions[i].raise = NULL;
-		} else {
-			num_exentries++;
-		}
-
-		debug("  %s%s\n", exceptions[i].name, \
-		      exceptions[i].raise ? "" : " (failed)");
-	}
-
-	debug("Building extable succeeded for %d/%lu items\n", \
-	      num_exentries, ARRAY_SIZE(exceptions));
-
-	sort(extable, num_exentries, sizeof(*extable), cmp_ex, NULL);
-
-	THIS_MODULE->extable = extable;
-	THIS_MODULE->num_exentries = num_exentries;
-#endif
 	return 0;
 }
 
@@ -287,16 +230,115 @@ int khook_inode_permission(struct inode * inode, int mode)
  * Module init/cleanup parts
  */
 
-static int init_hooks(void)
+static inline void x86_put_ud2(void * a)
+{
+	/* UD2 opcode -- 0F.0B */
+
+	*((short *)a) = 0x0B0F;
+}
+
+static inline void x86_put_jmp(void * a, void * t)
+{
+	/* JMP opcode -- E9.xx.xx.xx.xx */
+
+	*((char *)(a + 0)) = 0xE9;
+	*(( int *)(a + 1)) = (long)(t - (a + 5));
+}
+
+static int init_origin_stub(khookstr_t * s)
+{
+	ud_t ud;
+	int length = 0;
+
+	ud_initialize(&ud, BITS_PER_LONG, \
+		      UD_VENDOR_ANY, (void *)s->target, 32);
+
+	while (ud_disassemble(&ud) && ud.mnemonic != UD_Iret) {
+		if (ud.mnemonic == UD_Iud2 || ud.mnemonic == UD_Iint3) {
+			debug("It seems that \"%s\" is not a hooking virgin\n", s->name);
+			return -EINVAL;
+		}
+
+#define UD2_INSN_LEN	2
+
+		s->length += ud_insn_len(&ud);
+		if (s->length >= UD2_INSN_LEN) {
+			memcpy(s->origin_map, s->target, s->length);
+			x86_put_jmp(s->origin_map + length, s->target + length);
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static int do_init_hooks(void * arg)
 {
 	khookstr_t * s;
 
 	khook_for_each(s) {
+		if (atomic_read(&s->usage) == 1)
+			x86_put_ud2(s->target_map);
+	}
+
+	return 0;
+}
+
+static int init_hooks(void)
+{
+	khookstr_t * s;
+	int num_exentries = 0;
+	struct exception_table_entry * extable;
+
+	extable = (void *)pfnModuleAlloc(sizeof(*extable) * (__khook_finish - __khook_start));
+	if (extable == NULL) {
+		debug("Memory allocation failed\n");
+		return -ENOMEM;
+	}
+
+	khook_for_each(s) {
 		s->target = get_symbol_address(s->name);
-		if (!s->target)
-			continue;
-		/* map target's memory of 1 byte length */
-		s->target_map = map_writable(s->target, 1);
+		if (s->target) {
+			s->target_map = map_writable(s->target, 1);
+			s->origin_map = map_writable(s->origin, 32);
+
+			if (s->target_map && s->origin_map) {
+				if (init_origin_stub(s) == 0) {
+					struct exception_table_entry * entry = &extable[num_exentries++];
+
+					/* OK, the stub is initialized */
+
+					atomic_inc(&s->usage);
+
+					extable_make_insn(entry, (unsigned long)s->target);
+					extable_make_fixup(entry, (unsigned long)s->handler);
+
+					continue;
+				}
+			}
+		}
+
+		debug("Failed to initalize \"%s\" hook", s->name);
+	}
+
+	sort(extable, num_exentries, sizeof(*extable), cmp_ex, NULL);
+
+	THIS_MODULE->extable = extable;
+	THIS_MODULE->num_exentries = num_exentries;
+
+	/* apply patches */
+	stop_machine(do_init_hooks, NULL, NULL);
+
+	return 0;
+}
+
+static int do_clenup_hooks(void * arg)
+{
+	khookstr_t * s;
+
+	khook_for_each(s) {
+		if (atomic_read(&s->usage))
+			memcpy(s->target_map, s->origin, s->length);
 	}
 
 	return 0;
@@ -306,8 +348,16 @@ static void cleanup_hooks(void)
 {
 	khookstr_t * s;
 
+	/* restore patches */
+	stop_machine(do_clenup_hooks, NULL, NULL);
+
 	khook_for_each(s) {
-		vunmap((void *)((unsigned long)s->target_map & PAGE_MASK)), s->target_map = NULL;
+		while (atomic_read(&s->usage) != 1) {
+			msleep_interruptible(500);
+		}
+
+		vunmap((void *)((unsigned long)s->target_map & PAGE_MASK));
+		vunmap((void *)((unsigned long)s->origin_map & PAGE_MASK));
 	}
 
 	flush_extable();
@@ -322,9 +372,7 @@ int init_module(void)
 		return -EINVAL;
 	}
 
-	init_hooks();
-
-	return 0;
+	return init_hooks();
 }
 
 void cleanup_module(void)
