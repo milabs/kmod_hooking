@@ -309,6 +309,8 @@ static void cleanup_hooks(void)
 	khook_for_each(s) {
 		vunmap((void *)((unsigned long)s->target_map & PAGE_MASK)), s->target_map = NULL;
 	}
+
+	flush_extable();
 }
 
 int init_module(void)
@@ -328,7 +330,6 @@ int init_module(void)
 void cleanup_module(void)
 {
 	cleanup_hooks();
-	flush_extable();
 }
 
 MODULE_LICENSE("GPL");
