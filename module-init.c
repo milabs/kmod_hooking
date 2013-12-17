@@ -71,6 +71,39 @@ extern khookstr_t __khook_start[], __khook_finish[];
 	atomic_dec(&__khook_##t.usage)
 
 /*
+ * Kernel symbol address interface
+ */
+
+typedef struct {
+	const char * name;
+	void * address;
+} ksymstr_t;
+
+static int on_each_symbol(void * data, const char * name, struct module * module, unsigned long address)
+{
+	ksymstr_t * sym = (void *)data;
+
+	if (strcmp(name, sym->name) == 0) {
+		sym->address = (void *)address;
+		debug("Symbol \"%s\" found @ %pK\n", sym->name, sym->address);
+		return 1;
+	}
+
+	return 0;
+}
+
+void * get_symbol_address(const char * name)
+{
+	ksymstr_t sym = {
+		.name = name, .address = NULL,
+	};
+
+	kallsyms_on_each_symbol(on_each_symbol, &sym);
+
+	return sym.address;
+}
+
+/*
  * extable helpers
  */
 
@@ -183,20 +216,6 @@ static void flush_extable(void)
 	THIS_MODULE->extable = NULL;
 }
 
-int kallsyms_callback(void * data, const char * name, struct module * module, unsigned long address)
-{
-	if (module)
-		return 0;
-
-	if (strcmp(name, "module_free") == 0) {
-		pfnModuleFree = (module_free_t *)address;
-	} else if (strcmp(name, "module_alloc") == 0) {
-		pfnModuleAlloc = (module_alloc_t *)address;
-	}
-
-	return 0;
-}
-
 /*
  * Kernel function hooking example
  */
@@ -228,6 +247,7 @@ static int init_hooks(void)
 	khookstr_t * s;
 
 	khook_for_each(s) {
+		s->target = get_symbol_address(s->name);
 	}
 
 	return 0;
@@ -243,7 +263,8 @@ static void cleanup_hooks(void)
 
 int init_module(void)
 {
-	kallsyms_on_each_symbol(kallsyms_callback, NULL);
+	pfnModuleFree = get_symbol_address("module_free");
+	pfnModuleAlloc = get_symbol_address("module_alloc");
 
 	if (!pfnModuleFree || !pfnModuleAlloc) {
 		return -EINVAL;
