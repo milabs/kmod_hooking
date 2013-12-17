@@ -299,7 +299,7 @@ static int init_hooks(void)
 	khook_for_each(s) {
 		s->target = get_symbol_address(s->name);
 		if (s->target) {
-			s->target_map = map_writable(s->target, 1);
+			s->target_map = map_writable(s->target, 32);
 			s->origin_map = map_writable(s->origin, 32);
 
 			if (s->target_map && s->origin_map) {
