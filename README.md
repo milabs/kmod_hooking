@@ -1,4 +1,4 @@
 kmod_hooking
 ============
 
-Kernel function hooking using exception tables
+This module shows how to hook kernel functions using exception tables.
