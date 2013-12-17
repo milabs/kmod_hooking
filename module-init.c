@@ -248,7 +248,6 @@ static inline void x86_put_jmp(void * a, void * t)
 static int init_origin_stub(khookstr_t * s)
 {
 	ud_t ud;
-	int length = 0;
 
 	ud_initialize(&ud, BITS_PER_LONG, \
 		      UD_VENDOR_ANY, (void *)s->target, 32);
@@ -264,7 +263,7 @@ static int init_origin_stub(khookstr_t * s)
 		s->length += ud_insn_len(&ud);
 		if (s->length >= UD2_INSN_LEN) {
 			memcpy(s->origin_map, s->target, s->length);
-			x86_put_jmp(s->origin_map + length, s->target + length);
+			x86_put_jmp(s->origin_map + s->length, s->target + s->length);
 			break;
 		}
 	}
