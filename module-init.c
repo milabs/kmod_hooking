@@ -6,6 +6,8 @@
 #include <linux/kallsyms.h>
 #include <linux/sort.h>
 #include <linux/fs.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
 
 #include "udis86.h"
 
@@ -217,6 +219,49 @@ static void flush_extable(void)
 }
 
 /*
+ * map_writable creates a shadow page mapping of the range
+ * [addr, addr + len) so that we can write to code mapped read-only.
+ *
+ * It is similar to a generalized version of x86's text_poke.  But
+ * because one cannot use vmalloc/vfree() inside stop_machine, we use
+ * map_writable to map the pages before stop_machine, then use the
+ * mapping inside stop_machine, and unmap the pages afterwards.
+ *
+ * STOLEN from: https://github.com/jirislaby/ksplice
+ */
+
+static void *map_writable(void *addr, size_t len)
+{
+	void *vaddr;
+	int nr_pages = DIV_ROUND_UP(offset_in_page(addr) + len, PAGE_SIZE);
+	struct page **pages = kmalloc(nr_pages * sizeof(*pages), GFP_KERNEL);
+	void *page_addr = (void *)((unsigned long)addr & PAGE_MASK);
+	int i;
+
+	if (pages == NULL)
+		return NULL;
+
+	for (i = 0; i < nr_pages; i++) {
+		if (__module_address((unsigned long)page_addr) == NULL) {
+			pages[i] = virt_to_page(page_addr);
+			WARN_ON(!PageReserved(pages[i]));
+		} else {
+			pages[i] = vmalloc_to_page(page_addr);
+		}
+		if (pages[i] == NULL) {
+			kfree(pages);
+			return NULL;
+		}
+		page_addr += PAGE_SIZE;
+	}
+	vaddr = vmap(pages, nr_pages, VM_MAP, PAGE_KERNEL);
+	kfree(pages);
+	if (vaddr == NULL)
+		return NULL;
+	return vaddr + offset_in_page(addr);
+}
+
+/*
  * Kernel function hooking example
  */
 
@@ -248,6 +293,10 @@ static int init_hooks(void)
 
 	khook_for_each(s) {
 		s->target = get_symbol_address(s->name);
+		if (!s->target)
+			continue;
+		/* map target's memory of 1 byte length */
+		s->target_map = map_writable(s->target, 1);
 	}
 
 	return 0;
@@ -258,6 +307,7 @@ static void cleanup_hooks(void)
 	khookstr_t * s;
 
 	khook_for_each(s) {
+		vunmap((void *)((unsigned long)s->target_map & PAGE_MASK)), s->target_map = NULL;
 	}
 }
 
