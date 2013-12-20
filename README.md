@@ -1,7 +1,7 @@
 ## About
 
 
-This module provides machanism that allows to hook kernel functions using exception tables.
+This module provides mechanism that allows to hook kernel functions using exception tables.
 
 ## Usage
 
