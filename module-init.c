@@ -216,11 +216,7 @@ int khook_inode_permission(struct inode * inode, int mode)
 
 	debug("%s(%p,%08x)\n", __func__, inode, mode);
 
-#if 0
 	result = KHOOK_ORIGIN(inode_permission, inode, mode);
-#else
-	result = 0;
-#endif
 
 	debug("%s(%p,%08x) = %d\n", __func__, inode, mode, result);
 
