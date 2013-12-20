@@ -240,12 +240,12 @@ static inline void x86_put_ud2(void * a)
 	*((short *)a) = 0x0B0F;
 }
 
-static inline void x86_put_jmp(void * a, void * t)
+static inline void x86_put_jmp(void * a, void * f, void * t)
 {
 	/* JMP opcode -- E9.xx.xx.xx.xx */
 
 	*((char *)(a + 0)) = 0xE9;
-	*(( int *)(a + 1)) = (long)(t - (a + 5));
+	*(( int *)(a + 1)) = (long)(t - (f + 5));
 }
 
 static int init_origin_stub(khookstr_t * s)
@@ -266,7 +266,7 @@ static int init_origin_stub(khookstr_t * s)
 		s->length += ud_insn_len(&ud);
 		if (s->length >= UD2_INSN_LEN) {
 			memcpy(s->origin_map, s->target, s->length);
-			x86_put_jmp(s->origin_map + s->length, s->target + s->length);
+			x86_put_jmp(s->origin_map + s->length, s->origin + s->length, s->target + s->length);
 			break;
 		}
 	}
