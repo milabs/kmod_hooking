@@ -16,6 +16,8 @@ Given the kernel function `X` which has prototype `typeof(X)` let's see how to h
 ## Example
 
 ```
+#include <linux/fs.h> // inode_permission() prototype lives here
+
 DECLARE_KHOOK(inode_permission);
 int khook_inode_permission(struct inode * inode, int mode)
 {
