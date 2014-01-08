@@ -4,7 +4,6 @@
 #include <linux/uaccess.h>
 #include <linux/moduleloader.h>
 #include <linux/kallsyms.h>
-#include <linux/sort.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
@@ -25,7 +24,6 @@ module_alloc_t * pfnModuleAlloc = NULL;
 
 typedef typeof(sort_extable) sort_extable_t;
 sort_extable_t * pfnSortExtable = NULL;
-
 
 /*
  * Hooking structure
