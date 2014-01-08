@@ -23,6 +23,10 @@ module_free_t * pfnModuleFree = NULL;
 typedef typeof(module_alloc) module_alloc_t;
 module_alloc_t * pfnModuleAlloc = NULL;
 
+typedef typeof(sort_extable) sort_extable_t;
+sort_extable_t * pfnSortExtable = NULL;
+
+
 /*
  * Hooking structure
  */
@@ -139,19 +143,6 @@ static void extable_make_fixup(struct exception_table_entry * entry, unsigned lo
 #else
 	entry->fixup = addr;
 #endif
-}
-
-/* See lib/extable.c for details */
-static int cmp_ex(const void * a, const void * b)
-{
-	const struct exception_table_entry * x = a, * y = b;
-
-	/* avoid overflow */
-	if (x->insn > y->insn)
-		return 1;
-	if (x->insn < y->insn)
-		return -1;
-	return 0;
 }
 
 static void flush_extable(void)
@@ -320,7 +311,7 @@ static int init_hooks(void)
 		debug("Failed to initalize \"%s\" hook", s->name);
 	}
 
-	sort(extable, num_exentries, sizeof(*extable), cmp_ex, NULL);
+	pfnSortExtable(extable, extable + num_exentries);
 
 	THIS_MODULE->extable = extable;
 	THIS_MODULE->num_exentries = num_exentries;
@@ -366,8 +357,9 @@ int init_module(void)
 {
 	pfnModuleFree = get_symbol_address("module_free");
 	pfnModuleAlloc = get_symbol_address("module_alloc");
+	pfnSortExtable = get_symbol_address("sort_extable");
 
-	if (!pfnModuleFree || !pfnModuleAlloc) {
+	if (!pfnModuleFree || !pfnModuleAlloc || !pfnSortExtable) {
 		return -EINVAL;
 	}
 
