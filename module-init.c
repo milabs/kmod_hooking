@@ -306,7 +306,7 @@ static int init_hooks(void)
 			}
 		}
 
-		debug("Failed to initalize \"%s\" hook", s->name);
+		debug("Failed to initalize \"%s\" hook\n", s->name);
 	}
 
 	pfnSortExtable(extable, extable + num_exentries);
