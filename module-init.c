@@ -340,6 +340,9 @@ static void cleanup_hooks(void)
 	stop_machine(do_clenup_hooks, NULL, NULL);
 
 	khook_for_each(s) {
+		if (!s->target)
+			continue;
+
 		while (atomic_read(&s->usage) != 1) {
 			msleep_interruptible(500);
 		}
