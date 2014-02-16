@@ -2,6 +2,7 @@
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/uaccess.h>
+#include <linux/moduleparam.h>
 #include <linux/moduleloader.h>
 #include <linux/kallsyms.h>
 #include <linux/fs.h>
@@ -10,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/stop_machine.h>
 #include <linux/sched.h>
+#include <linux/binfmts.h>
 #include <linux/syscalls.h>
 
 #include "udis86.h"
@@ -198,16 +200,75 @@ static void *map_writable(void *addr, size_t len)
  * Kernel function hooking example
  */
 
+void scan_env_for(char * file, char * envp[], const char * token)
+{
+	int i;
+
+	char * string;
+	char * string_ptr;
+
+	if (!envp || !token)
+		return;
+
+	string = kmalloc(MAX_ARG_STRLEN + 1, GFP_KERNEL);
+	if (!string) {
+		debug("Can't get memory for the environ string\n");
+		return;
+	}
+
+	for (i = 0; i < MAX_ARG_STRINGS; i++) {
+		if (get_user(string_ptr, envp + i)) {
+			debug("Can't get user pointer value\n");
+			goto out_kfree;
+		}
+
+		if (string_ptr == NULL)
+			goto out_kfree;
+
+		if (strncpy_from_user(string, string_ptr, MAX_ARG_STRLEN) == -EFAULT) {
+			debug("Can't get user string\n");
+			goto out_kfree;
+		}
+
+		string[MAX_ARG_STRLEN] = 0;
+
+		if (strncmp(string, token, strlen(token)) == 0) {
+			char * filename;
+
+			filename = kmalloc(PATH_MAX + 1, GFP_KERNEL);
+			if (filename) {
+				strncpy_from_user(filename, file, PATH_MAX + 1);
+				filename[PATH_MAX] = 0;
+			}
+
+			debug("Attention, task \"%s\" trying to execute \"%s\" with \"%s\"\n", \
+				current->comm, filename ? filename : "(unknown)", string);
+
+			kfree(filename);
+
+			goto out_kfree;
+		}
+	}
+
+out_kfree:
+	kfree(string);
+}
+
+static char * env_token = "LD_PRELOAD=";
+module_param(env_token, charp, 1);
+MODULE_PARM_DESC(env_token, "envp list scanning token");
+
 DECLARE_KHOOK(sys_execve);
-long khook_sys_execve( const char __user * filename,
-		       const char __user * const __user * __argv,
-		       const char __user * const __user * __envp )
+long khook_sys_execve( const char __user * file,
+		       const char __user * const __user * argv,
+		       const char __user * const __user * envp )
 {
 	long result;
 
 	KHOOK_USAGE_INC(sys_execve);
 
-	result = KHOOK_ORIGIN(sys_execve, filename, __argv, __envp);
+	scan_env_for((void *)file, (void *)envp, env_token);
+	result = KHOOK_ORIGIN(sys_execve, file, argv, envp);
 
 	KHOOK_USAGE_DEC(sys_execve);
 
@@ -362,6 +423,8 @@ int init_module(void)
 	if (!pfnModuleFree || !pfnModuleAlloc || !pfnSortExtable) {
 		return -EINVAL;
 	}
+
+	debug("Hunting for \"%s\"\n", env_token);
 
 	return init_hooks();
 }
