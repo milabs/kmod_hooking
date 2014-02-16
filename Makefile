@@ -1,4 +1,4 @@
-NAME		:= hooking
+NAME		:= envscan
 
 obj-m		:= $(NAME).o
 obj-y		:= libudis86/
