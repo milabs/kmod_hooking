@@ -10,6 +10,7 @@
 #include <linux/delay.h>
 #include <linux/stop_machine.h>
 #include <linux/sched.h>
+#include <linux/syscalls.h>
 
 #include "udis86.h"
 
@@ -197,20 +198,18 @@ static void *map_writable(void *addr, size_t len)
  * Kernel function hooking example
  */
 
-DECLARE_KHOOK(inode_permission);
-int khook_inode_permission(struct inode * inode, int mode)
+DECLARE_KHOOK(sys_execve);
+long khook_sys_execve( const char __user * filename,
+		       const char __user * const __user * __argv,
+		       const char __user * const __user * __envp )
 {
-	int result;
+	long result;
 
-	KHOOK_USAGE_INC(inode_permission);
+	KHOOK_USAGE_INC(sys_execve);
 
-	debug("%s(%pK,%08x) [%s]\n", __func__, inode, mode, current->comm);
+	result = KHOOK_ORIGIN(sys_execve, filename, __argv, __envp);
 
-	result = KHOOK_ORIGIN(inode_permission, inode, mode);
-
-	debug("%s(%pK,%08x) [%s] = %d\n", __func__, inode, mode, current->comm, result);
-
-	KHOOK_USAGE_DEC(inode_permission);
+	KHOOK_USAGE_DEC(sys_execve);
 
 	return result;
 }
