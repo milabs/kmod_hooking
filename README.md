@@ -39,4 +39,4 @@ int khook_inode_permission(struct inode * inode, int mode)
 
 ## Credits
 
-Written by Ilya V. Matveychikov <i.matveychikov@milabs.ru>, distributed under GPL
+Written by Ilya V. Matveychikov <matvejchikov@gmail.com>, distributed under GPL
